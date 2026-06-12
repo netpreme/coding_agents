@@ -7,9 +7,7 @@ Coding agents take turns to carry out tasks. Using Claude code as the harness, t
 
 To collect above metrics, please check the README in the folder `/isl_osl` [here](coding_agents/isl_osl/README.md). 
 
-## Setup
-
-### Installation
+## Installation
 
 Install prerequisites and setup python virtual env.
 

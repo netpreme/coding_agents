@@ -121,6 +121,9 @@ For open source/weight models
 For Opus, a request is sent to Anthropic's backend - no vLLM or proxy.
 
 
+## Note
+After submitting a task to Claude code, it may send title-generation requests to vLLM before sending task related requests. These are independent to the task at hand, and have ~50 shared tokens with the system prompt, altering the actual workload prefix cache metrics. These are filtered using a proxy. 
+
 ## Per-run output (`results/<stamp>/`)
 
 - `config.json` — overall run config (CLI args, serving config, resolved model, dataset name + counts, versions, GPU info)
