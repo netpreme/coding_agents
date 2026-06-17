@@ -62,7 +62,7 @@ class Proxy:
         # Truncate any prior file for this id (retry-on-resume safety).
         if self.raw:
             idir = instance_dir(self.out_dir, self.instance_id)
-            (idir / "vllm_traces.jsonl").unlink(missing_ok=True)
+            (idir / "turn_traces.jsonl").unlink(missing_ok=True)
         app = ProxyApp(
             self.url,
             self.out_dir,

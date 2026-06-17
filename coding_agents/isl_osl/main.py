@@ -5,15 +5,15 @@ problem is wrapped in four context managers, each driving one thing:
 
     Server         fresh vLLM for this problem (empty cache; killed on exit)
     MetricsScraper polls vLLM's Prometheus /metrics once per turn
-                   → results/<stamp>/telemetry/<iid>/vllm_metrics.jsonl
+                   → results/<stamp>/telemetry/<iid>/engine_metrics.jsonl
     Proxy          sits between claude-cli and vLLM (with --capture); normalizes
                    requests and tees the per-turn raw text trace
-                   → results/<stamp>/telemetry/<iid>/vllm_traces.jsonl
+                   → results/<stamp>/telemetry/<iid>/turn_traces.jsonl
     Sandbox        throwaway repo checkout + wall-clock timer for this problem
 
 The agent only solves; analysis is a separate pass run on demand (it derives
 Anthropic transcript telemetry when needed, then builds its arrays and figures).
-Per-problem metadata (results/<stamp>/telemetry/<iid>/session_config.json)
+Per-problem metadata (results/<stamp>/telemetry/<iid>/session.json)
 doubles as the resume ledger.
 
     for task in dataset:
@@ -78,7 +78,7 @@ def main() -> int:
         default=None,
         choices=["raw"],
         help="run the proxy and tee the per-turn raw text trace "
-        "(isl/isl_new/osl as text) → vllm_traces.jsonl. Omit the flag to skip "
+        "(isl/isl_new/osl as text) → turn_traces.jsonl. Omit the flag to skip "
         "the proxy entirely. `--capture` and `--capture raw` are equivalent.",
     )
     parser.add_argument(
@@ -96,7 +96,7 @@ def main() -> int:
         "--model", default=None, help="model to serve (default: server.sh's .env)"
     )
     parser.add_argument(
-        "--tensor-parallel", dest="tensor_parallel_size", type=int, default=None
+        "--tensor-parallel", dest="tensor_parallel_size", type=int, default=1
     )
     parser.add_argument("--max-model-len", type=int, default=None)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
@@ -129,7 +129,7 @@ def main() -> int:
 
     # Resume skips problems already solved here (session_config exit_code == 0).
     solved_ids = set()
-    for session_path in (save_dir / "telemetry").glob("*/session_config.json"):
+    for session_path in (save_dir / "telemetry").glob("*/session.json"):
         session = json.loads(session_path.read_text())
         if session.get("exit_code") == 0:
             solved_ids.add(session["instance_id"])

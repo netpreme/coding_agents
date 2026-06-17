@@ -2,12 +2,12 @@
 
 Two JSON snapshots of a run:
 
-- ``write_config`` — once per run, ``config.json``: the overall config — full
+- ``write_config`` — once per run, ``run_config.json``: the overall config — full
   CLI args, the running server's resolved serving knobs (arg → os env → .env,
   incl. the actually-served model) and that model as a top-level label, the raw
   .env, the dataset selection (name + counts), ports, versions, gpu.
 - ``save_session_metadata`` — once per problem,
-  ``telemetry/<iid>/session_config.json``: the problem's id/repo/commit, the
+  ``telemetry/<iid>/session.json``: the problem's id/repo/commit, the
   server + resolved model, timing and exit code. Doubles as the resume ledger
   (main.py reads ``exit_code == 0`` to skip solved problems).
 """
@@ -38,7 +38,7 @@ def write_config(
     proxy_port: int,
     started_at: float,
 ) -> None:
-    """Snapshot the overall config for this run to ``config.json``."""
+    """Snapshot the overall config for this run to ``run_config.json``."""
     serving_config = server.serving_config()
     config = {
         "stamp": save_dir.name,
@@ -67,10 +67,10 @@ def write_config(
         "gpu": gpu_info(),
     }
     # default=str so Path args (e.g. --resume) serialize cleanly.
-    (save_dir / "config.json").write_text(
+    (save_dir / "run_config.json").write_text(
         json.dumps(config, indent=2, default=str) + "\n"
     )
-    logger.info("wrote config → {}", save_dir / "config.json")
+    logger.info("wrote config → {}", save_dir / "run_config.json")
 
 
 def save_session_metadata(
@@ -81,7 +81,7 @@ def save_session_metadata(
     ended_at: float,
     exit_code: int,
 ) -> None:
-    """Record one problem's session config under telemetry/<iid>/session_config.json."""
+    """Record one problem's session config under telemetry/<iid>/session.json."""
     iid = task["instance_id"]
     problem_dir = instance_dir(save_dir / "telemetry", iid)
     problem_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +95,4 @@ def save_session_metadata(
         "ended_at": round(ended_at, 3),
         "exit_code": exit_code,
     }
-    (problem_dir / "session_config.json").write_text(
-        json.dumps(session, indent=2) + "\n"
-    )
+    (problem_dir / "session.json").write_text(json.dumps(session, indent=2) + "\n")

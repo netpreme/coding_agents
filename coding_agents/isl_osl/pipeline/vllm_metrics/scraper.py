@@ -26,7 +26,7 @@ class MetricsScraper:
     ``vllm:request_prompt_tokens_count`` and, each time it increments, records
     the delta of every other counter as that turn's row. Relies on
     **concurrency = 1** so each increment maps to exactly one turn. Rows are
-    RAW measurements appended to ``save_dir/telemetry/<instance_id>/vllm_metrics.jsonl``.
+    RAW measurements appended to ``save_dir/telemetry/<instance_id>/engine_metrics.jsonl``.
     """
 
     def __init__(
@@ -58,7 +58,7 @@ class MetricsScraper:
         if not self.enabled:
             return self
         # Truncate any prior file for this id (retry-on-resume safety).
-        (instance_dir(self.out_dir, self.instance_id) / "vllm_metrics.jsonl").unlink(
+        (instance_dir(self.out_dir, self.instance_id) / "engine_metrics.jsonl").unlink(
             missing_ok=True
         )
         self._thread = threading.Thread(
@@ -95,7 +95,7 @@ class Poller:
     ) -> None:
         self._url = url.rstrip("/")
         self._instance_id = instance_id
-        self._out = JsonlWriter(out_dir, "vllm_metrics.jsonl")
+        self._out = JsonlWriter(out_dir, "engine_metrics.jsonl")
         self._poll_interval_s = poll_interval_s
 
     def run_blocking(self, stop_event: threading.Event) -> None:

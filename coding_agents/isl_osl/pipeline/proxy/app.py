@@ -3,7 +3,7 @@
 ``ProxyApp(upstream, out_dir, instance_id, raw=True).build()`` returns a
 Starlette app that, for each `POST /v1/messages`, sanitizes the request and
 (with raw capture) tees the per-turn text trace to
-`<out_dir>/<instance_id>/vllm_traces.jsonl`; other paths stream through
+`<out_dir>/<instance_id>/turn_traces.jsonl`; other paths stream through
 unchanged (e.g. /v1/models).
 """
 
@@ -70,9 +70,9 @@ class ProxyApp:
         self.upstream = upstream.rstrip("/")
         self.instance_id = instance_id
         # With raw capture: tee the raw text traces (isl_new + osl) to
-        # vllm_traces.jsonl. `_prev_units` is the previous turn's request units, so each
+        # turn_traces.jsonl. `_prev_units` is the previous turn's request units, so each
         # turn's new suffix (isl_new as text) is a pure cross-turn string diff.
-        self._raw_writer = JsonlWriter(out_dir, "vllm_traces.jsonl") if raw else None
+        self._raw_writer = JsonlWriter(out_dir, "turn_traces.jsonl") if raw else None
         self._prev_units: list[str] = []
 
     def build(self) -> Starlette:
