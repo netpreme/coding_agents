@@ -73,13 +73,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--capture",
-        nargs="?",
-        const="raw",
-        default=None,
-        choices=["raw"],
-        help="run the proxy and tee the per-turn raw text trace "
-        "(isl/isl_new/osl as text) → turn_traces.jsonl. Omit the flag to skip "
-        "the proxy entirely. `--capture` and `--capture raw` are equivalent.",
+        action="store_true",
+        default=False,
+        help="capture per-turn raw text traces (isl/isl_new/osl) in turn_traces.jsonl "
+        "when using open source/weight models on vLLM",
     )
     parser.add_argument(
         "--limit",
@@ -141,9 +138,9 @@ def main() -> int:
     logger.info("{} problems pending → {}", len(dataset), save_dir)
 
     backend_url = ANTHROPIC_URL if remote else SERVER_URL
-    capture = not remote and args.capture is not None
+    capture = not remote and args.capture
     sandbox_root = Path(f"/tmp/swe_sandboxes/{save_dir.name}")
-    run_start_time = time.time()
+    run_start_ts = time.time()
 
     server_kwargs = dict(
         url=backend_url,
@@ -165,7 +162,7 @@ def main() -> int:
         dataset_name=dataset_name,
         solved_ids=solved_ids,
         proxy_port=PROXY_PORT,
-        run_start_time=run_start_time,
+        run_start_ts=run_start_ts,
     )
 
     for task in tqdm(dataset, desc="solving", unit="problem"):
@@ -185,7 +182,6 @@ def main() -> int:
                 url=server.url,
                 proxy_port=PROXY_PORT,
                 capture=capture,
-                raw=capture,
             ) as proxy,
             Sandbox(root=sandbox_root, prefix=f"{instance_id}.") as sandbox,
         ):
@@ -203,8 +199,8 @@ def main() -> int:
             save_dir=save_dir,
             task=task,
             server=server,
-            start_time=sandbox.start_time,
-            end_time=sandbox.end_time,
+            start_ts=sandbox.start_ts,
+            end_ts=sandbox.end_ts,
             exit_code=exit_code,
         )
 

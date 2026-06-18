@@ -36,15 +36,14 @@ def write_config(
     dataset_name: str,
     solved_ids: set,
     proxy_port: int,
-    run_start_time: float,
+    run_start_ts: float,
 ) -> None:
     """Snapshot the overall config for this run to ``run_config.json``."""
     serving_config = server.serving_config()
-    rounded_start_time = round(run_start_time, 3)
+    rounded_start_ts = round(run_start_ts, 3)
     config = {
         "stamp": save_dir.name,
-        "run_start_time": rounded_start_time,
-        "started_at": rounded_start_time,
+        "run_start_ts": rounded_start_ts,
         "command": " ".join(sys.argv),
         "backend": args.backend,
         # served model resolved from args/env/.env (no running server needed);
@@ -79,26 +78,24 @@ def save_session_metadata(
     save_dir: Path,
     task: dict,
     server: Server,
-    start_time: float,
-    end_time: float,
+    start_ts: float,
+    end_ts: float,
     exit_code: int,
 ) -> None:
     """Record one problem's session config under telemetry/<iid>/session.json."""
     iid = task["instance_id"]
     problem_dir = instance_dir(save_dir / "telemetry", iid)
     problem_dir.mkdir(parents=True, exist_ok=True)
-    rounded_start_time = round(start_time, 3)
-    rounded_end_time = round(end_time, 3)
+    rounded_start_ts = round(start_ts, 3)
+    rounded_end_ts = round(end_ts, 3)
     session = {
         "instance_id": iid,
         "repo": task.get("repo"),
         "base_commit": task.get("base_commit"),
         "model": server.model,
         "serving_config": server.serving_config(),
-        "start_time": rounded_start_time,
-        "end_time": rounded_end_time,
-        "started_at": rounded_start_time,
-        "ended_at": rounded_end_time,
+        "start_ts": rounded_start_ts,
+        "end_ts": rounded_end_ts,
         "exit_code": exit_code,
     }
     (problem_dir / "session.json").write_text(json.dumps(session, indent=2) + "\n")

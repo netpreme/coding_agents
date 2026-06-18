@@ -47,9 +47,6 @@ def _strip_billing_header(text: str) -> str:
     return _BILLING_RE.sub("", text, count=1)
 
 
-_strip_volatile_system = _strip_billing_header
-
-
 def request_chunks(body: dict) -> list[str]:
     """Ordered serialized chunks of the request input, for prefix-diffing
     across turns. The conversation is append-only, so turn N's chunks share a
@@ -67,9 +64,6 @@ def request_chunks(body: dict) -> list[str]:
     for message in body.get("messages") or []:
         chunks.append("MSG:" + json.dumps(message))
     return chunks
-
-
-request_units = request_chunks
 
 
 def common_prefix_len(previous_units: list[str], current_units: list[str]) -> int:
@@ -115,9 +109,6 @@ def extract_output_text(body: bytes) -> str:
             elif delta_type == "thinking_delta":
                 parts.append(delta.get("thinking") or "")
     return "".join(parts)
-
-
-parse_response_text = extract_output_text
 
 
 def _system_prompt_text(body: dict) -> str:

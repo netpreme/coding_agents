@@ -72,7 +72,9 @@ class ProxyApp:
         # With capture: tee the raw text traces (isl_new + osl) to
         # turn_traces.jsonl. `_last_turn_units` is the previous turn's request chunks, so each
         # turn's new suffix (isl_new as text) is a pure cross-turn string diff.
-        self._trace_writer = JsonlWriter(out_dir, "turn_traces.jsonl") if capture else None
+        self._trace_writer = (
+            JsonlWriter(out_dir, "turn_traces.jsonl") if capture else None
+        )
         self._last_turn_units: list[str] = []
         self._last_response_time: float | None = None
 
@@ -215,7 +217,6 @@ class ProxyApp:
             instance_id=self.instance_id,
             row={
                 "request_time": round(request_received_time, 3),
-                "ts": round(request_received_time, 3),
                 "tool_exec_ms": tool_exec_ms,
                 "isl_text": "\n".join(chunks),
                 "isl_new_text": "\n".join(chunks[prefix_length:]),

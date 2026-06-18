@@ -36,7 +36,6 @@ class Proxy:
         url: str,
         proxy_port: int = 8001,
         capture: bool = False,
-        raw: bool = False,
         upstream_health: bool = True,
     ) -> None:
         self.save_dir = save_dir
@@ -44,7 +43,6 @@ class Proxy:
         self.url = url
         self.proxy_port = proxy_port
         self.capture = capture
-        self.raw = raw
         # Remote backends do not use this proxy; upstream_health is kept for
         # tests or controlled callers that want to skip the forwarded probe.
         self.upstream_health = upstream_health
@@ -60,14 +58,13 @@ class Proxy:
             return self  # no proxy; claude talks to vLLM directly
 
         # Truncate any prior file for this id (retry-on-resume safety).
-        if self.raw:
-            idir = instance_dir(self.out_dir, self.instance_id)
-            (idir / "turn_traces.jsonl").unlink(missing_ok=True)
+        idir = instance_dir(self.out_dir, self.instance_id)
+        (idir / "turn_traces.jsonl").unlink(missing_ok=True)
         app = ProxyApp(
             self.url,
             self.out_dir,
             self.instance_id,
-            capture=self.raw,
+            capture=self.capture,
         ).build()
 
         self._server = uvicorn.Server(
