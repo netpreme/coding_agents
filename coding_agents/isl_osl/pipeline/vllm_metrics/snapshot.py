@@ -39,7 +39,7 @@ class Snapshot:
     kv_usage_pct: float
     prefix_cache_hits: int
     external_prefix_cache_hits: int
-    wall_time: float
+    ts: float
 
     @classmethod
     def from_metrics(cls, metrics: dict[str, float]) -> "Snapshot":
@@ -80,7 +80,7 @@ class Snapshot:
             external_prefix_cache_hits=int(
                 extract_metric(metrics=metrics, name_prefix=EXTERNAL_PREFIX_CACHE_HITS)
             ),
-            wall_time=time.time(),
+            ts=time.time(),
         )
 
 
@@ -105,9 +105,10 @@ def compute_turn_metrics(
     isl = after.prompt_tokens - before.prompt_tokens
     osl = after.gen_tokens - before.gen_tokens
     isl_new = after.prefill_kv_computed - before.prefill_kv_computed
+    ts = round(before.ts, 3)
 
     return {
-        "ts": round(before.wall_time, 3),
+        "ts": ts,
         "isl": isl,
         "osl": osl,
         "isl_new": isl_new,

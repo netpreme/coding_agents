@@ -38,10 +38,16 @@ def check_server_initialized(url: str, timeout: float) -> bool:
     return False
 
 
-def get_model_name(url: str) -> str:
-    """Ask vLLM which model it's serving — that's what claude-cli sends."""
+def get_server_metadata(url: str) -> dict:
+    """Fetch served-model metadata from /v1/models.
+
+    Returns id and max_model_len — the only launch knobs vLLM surfaces via its
+    API. tensor_parallel_size and gpu_memory_utilization are not in the response
+    and must come from CLI args / env.
+    """
     with urllib.request.urlopen(f"{url}/v1/models", timeout=2.0) as response:
-        return json.loads(response.read())["data"][0]["id"]
+        data = json.loads(response.read())["data"][0]
+    return {"id": data["id"], "max_model_len": data.get("max_model_len")}
 
 
 # GPU / NVML helpers.

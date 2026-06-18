@@ -43,7 +43,7 @@ from pipeline.vllm_server.utils import (
     SERVER_SH,
     _read_env_file,
     check_server_initialized,
-    get_model_name,
+    get_server_metadata,
     gpu_used_mib,
     read_tail,
 )
@@ -99,13 +99,14 @@ class Server:
             return self
         logger.info("starting vllm at {}", self.url)
         self._stop()  # clear any stale server first
-        self._proc = subprocess.Popen(
-            ["bash", str(SERVER_SH), *self.server_args],
-            env=self._env(),
-            stdout=LOG.open("w"),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        with LOG.open("w") as log_fh:
+            self._proc = subprocess.Popen(
+                ["bash", str(SERVER_SH), *self.server_args],
+                env=self._env(),
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
 
         deadline = time.monotonic() + self._READY_TIMEOUT
         while not check_server_initialized(f"{self.url}/v1/models", 2.0):
@@ -118,8 +119,12 @@ class Server:
                     f"vllm not ready after {self._READY_TIMEOUT:.0f}s (see {LOG})"
                 )
 
-        # Pin the actual served model so callers can read `server.model`.
-        self.model = self.model or get_model_name(self.url)
+        # Pin model and max_model_len from the live server so serving_config()
+        # always emits real values.
+        info = get_server_metadata(self.url)
+        self.model = self.model or info["id"]
+        if self.max_model_len is None:
+            self.max_model_len = info["max_model_len"]
         logger.info(
             "vllm ready at {} — {}",
             self.url,

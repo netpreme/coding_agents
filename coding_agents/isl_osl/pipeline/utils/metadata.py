@@ -2,12 +2,12 @@
 
 Two JSON snapshots of a run:
 
-- ``write_config`` — once per run, ``config.json``: the overall config — full
+- ``write_config`` — once per run, ``run_config.json``: the overall config — full
   CLI args, the running server's resolved serving knobs (arg → os env → .env,
   incl. the actually-served model) and that model as a top-level label, the raw
   .env, the dataset selection (name + counts), ports, versions, gpu.
 - ``save_session_metadata`` — once per problem,
-  ``telemetry/<iid>/session_config.json``: the problem's id/repo/commit, the
+  ``telemetry/<iid>/session.json``: the problem's id/repo/commit, the
   server + resolved model, timing and exit code. Doubles as the resume ledger
   (main.py reads ``exit_code == 0`` to skip solved problems).
 """
@@ -36,13 +36,14 @@ def write_config(
     dataset_name: str,
     solved_ids: set,
     proxy_port: int,
-    started_at: float,
+    run_start_ts: float,
 ) -> None:
-    """Snapshot the overall config for this run to ``config.json``."""
+    """Snapshot the overall config for this run to ``run_config.json``."""
     serving_config = server.serving_config()
+    rounded_start_ts = round(run_start_ts, 3)
     config = {
         "stamp": save_dir.name,
-        "started_at": round(started_at, 3),
+        "run_start_ts": rounded_start_ts,
         "command": " ".join(sys.argv),
         "backend": args.backend,
         # served model resolved from args/env/.env (no running server needed);
@@ -67,34 +68,34 @@ def write_config(
         "gpu": gpu_info(),
     }
     # default=str so Path args (e.g. --resume) serialize cleanly.
-    (save_dir / "config.json").write_text(
+    (save_dir / "run_config.json").write_text(
         json.dumps(config, indent=2, default=str) + "\n"
     )
-    logger.info("wrote config → {}", save_dir / "config.json")
+    logger.info("wrote config → {}", save_dir / "run_config.json")
 
 
 def save_session_metadata(
     save_dir: Path,
     task: dict,
     server: Server,
-    started_at: float,
-    ended_at: float,
+    start_ts: float,
+    end_ts: float,
     exit_code: int,
 ) -> None:
-    """Record one problem's session config under telemetry/<iid>/session_config.json."""
+    """Record one problem's session config under telemetry/<iid>/session.json."""
     iid = task["instance_id"]
     problem_dir = instance_dir(save_dir / "telemetry", iid)
     problem_dir.mkdir(parents=True, exist_ok=True)
+    rounded_start_ts = round(start_ts, 3)
+    rounded_end_ts = round(end_ts, 3)
     session = {
         "instance_id": iid,
         "repo": task.get("repo"),
         "base_commit": task.get("base_commit"),
         "model": server.model,
         "serving_config": server.serving_config(),
-        "started_at": round(started_at, 3),
-        "ended_at": round(ended_at, 3),
+        "start_ts": rounded_start_ts,
+        "end_ts": rounded_end_ts,
         "exit_code": exit_code,
     }
-    (problem_dir / "session_config.json").write_text(
-        json.dumps(session, indent=2) + "\n"
-    )
+    (problem_dir / "session.json").write_text(json.dumps(session, indent=2) + "\n")

@@ -48,7 +48,8 @@ The OSL is the cumulative tokens generated in decode. ISL_new is the unique toke
 |---|---|
 | `instance_id` | SWE-bench Pro/Verified instance_id |
 | `turn` | turn number within the problem |
-| `ts` | wall-clock timestamp of the turn (orders turns) |
+| `request_time` | wall-clock timestamp of the turn in `turn_traces.jsonl` (proxy) |
+| `ts` | wall-clock timestamp of the turn in `engine_metrics.jsonl` (vLLM scraper) |
 | `e2e_ms` | vLLM's end-to-end latency for the turn |
 | `prefix_kv_tokens` | `isl + osl` of the previous turn (max possible cache reuse this turn) |
 | `usable_prefix_kv_tokens` | `cache_hit_rate × prefix_kv_tokens` |
@@ -59,10 +60,10 @@ The OSL is the cumulative tokens generated in decode. ISL_new is the unique toke
 
 ```bash
 # GPT-OSS 120B on local vLLM (2 GPUs), capturing raw per-turn text traces
-python coding_agents/isl_osl/main.py --model openai/gpt-oss-120b --tool-call openai --tensor-parallel 2 --capture raw
+python coding_agents/isl_osl/main.py --model openai/gpt-oss-120b --tool-call openai --tensor-parallel 2 --capture
 
 # Claude Opus via Anthropic (OAuth subscription; no local vLLM)
-python coding_agents/isl_osl/main.py --model opus --backend anthropic --capture raw
+python coding_agents/isl_osl/main.py --model opus --backend anthropic --capture
 ```
 
 `main.py` starts a fresh vLLM server per problem. To swap the served model, pass the flags to `main.py`
@@ -73,7 +74,7 @@ Flags:
 |---|---|---|
 | `--backend NAME`               | `vllm` | `vllm` serves locally and scrapes Prometheus; `anthropic` uses Claude OAuth and saves transcripts for later analysis |
 | `--dataset NAME`               | `pro` | benchmark dataset: `pro` ([SWE-bench Pro public set](https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro)) or `verified` ([SWE-bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified)) |
-| `--capture [raw]`              | —     | run the proxy and tee per-turn raw text traces to `vllm_traces.jsonl` (vLLM backend only) |
+| `--capture`                    | —     | tee per-turn raw text traces to `turn_traces.jsonl` (vLLM backend only; proxy always runs for non-anthropic backends) |
 | `--limit N`                    | all pending problems | run at most `N` pending problems |
 | `--resume SAVE_DIR`            | —     | reuse an existing run directory and skip problems with `exit_code == 0` |
 | `--model HF_ID`                | `server.sh` / `.env` | model id; required for `--backend anthropic` |
@@ -126,11 +127,8 @@ After submitting a task to Claude code, it may send title-generation requests to
 
 ## Per-run output (`results/<stamp>/`)
 
-- `config.json` — overall run config (CLI args, serving config, resolved model, dataset name + counts, versions, GPU info)
-- `telemetry/<id>/vllm_metrics.jsonl` — one row per assistant turn (vLLM metrics, or derived Anthropic usage)
-- `telemetry/<id>/vllm_traces.jsonl` — per-turn raw text trace (isl/isl_new/osl as text); only with `--capture`
+- `run_config.json` — overall run config (CLI args, serving config, resolved model, dataset name + counts, versions, GPU info)
+- `telemetry/<id>/engine_metrics.jsonl` — one row per assistant turn from vLLM metrics
+- `telemetry/<id>/turn_traces.jsonl` — per-turn raw text trace (isl/isl_new/osl as text); only with `--capture`
 - `telemetry/<id>/claude_transcript.jsonl` — Anthropic/OAuth transcript source, when using that backend
-- `telemetry/<id>/session_config.json` — per-problem config (instance_id, repo/commit, server, model, started_at, ended_at, exit_code, ...)
-
-
-
+- `telemetry/<id>/session.json` — per-problem config (instance_id, repo/commit, server, model, start_ts, end_ts, exit_code, ...)

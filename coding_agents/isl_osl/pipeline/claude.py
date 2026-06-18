@@ -189,7 +189,7 @@ def _copy_transcript(
     telemetry/<iid>/claude_transcript.jsonl — the authoritative, untouched
     record (final per-turn usage + full tool outputs + conversation text).
     That's the ONLY thing captured for the Anthropic/OAuth backend; the derived
-    vllm_metrics.jsonl/vllm_traces.jsonl (counts + per-turn texts) are produced
+    engine_metrics.jsonl/turn_traces.jsonl (counts + per-turn texts) are produced
     separately by the analysis pass, since they only make sense as a post-hoc
     transform of this transcript, not as live vLLM telemetry."""
     tpath = _locate_transcript(session_id, repo_dir)

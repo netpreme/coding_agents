@@ -10,7 +10,7 @@ from pipeline.vllm_server.utils import (
     SERVER_SH,
     _read_env_file,
     check_server_initialized,
-    get_model_name,
+    get_server_metadata,
     get_package_version,
     gpu_info,
     gpu_used_mib,
@@ -20,7 +20,7 @@ from pipeline.vllm_server.utils import (
 __all__ = [
     "Server",
     "check_server_initialized",
-    "get_model_name",
+    "get_server_metadata",
     "get_package_version",
     "gpu_info",
     "gpu_used_mib",
