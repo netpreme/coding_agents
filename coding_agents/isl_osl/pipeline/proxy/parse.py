@@ -43,31 +43,37 @@ def rerole_system_messages(body: dict) -> int:
 _BILLING_RE = re.compile(r"^x-anthropic-billing-header:.*?cch=[^;]*;", re.S)
 
 
-def _strip_volatile_system(text: str) -> str:
+def _strip_billing_header(text: str) -> str:
     return _BILLING_RE.sub("", text, count=1)
 
 
-def request_units(body: dict) -> list[str]:
-    """Ordered serialized 'units' of the request input, for prefix-diffing
-    across turns. The conversation is append-only, so turn N's units share a
+_strip_volatile_system = _strip_billing_header
+
+
+def request_chunks(body: dict) -> list[str]:
+    """Ordered serialized chunks of the request input, for prefix-diffing
+    across turns. The conversation is append-only, so turn N's chunks share a
     common prefix with turn N-1's; the new suffix is ``isl_new`` as raw text.
 
-    Units: the (static) system text, then the (static) tools blob, then one
+    Chunks: the (static) system text, then the (static) tools blob, then one
     per message — so on later turns only freshly-appended messages differ."""
-    units: list[str] = []
-    system = _strip_volatile_system(_system_prompt_text(body))
+    chunks: list[str] = []
+    system = _strip_billing_header(_system_prompt_text(body))
     if system:
-        units.append("SYSTEM:" + system)
+        chunks.append("SYSTEM:" + system)
     tools = body.get("tools") or []
     if tools:
-        units.append("TOOLS:" + json.dumps(tools))
+        chunks.append("TOOLS:" + json.dumps(tools))
     for message in body.get("messages") or []:
-        units.append("MSG:" + json.dumps(message))
-    return units
+        chunks.append("MSG:" + json.dumps(message))
+    return chunks
+
+
+request_units = request_chunks
 
 
 def common_prefix_len(previous_units: list[str], current_units: list[str]) -> int:
-    """Length of the shared leading run of two unit lists."""
+    """Length of the shared leading run of two chunk lists."""
     prefix_length = 0
     for previous_unit, current_unit in zip(previous_units, current_units):
         if previous_unit != current_unit:
@@ -76,7 +82,7 @@ def common_prefix_len(previous_units: list[str], current_units: list[str]) -> in
     return prefix_length
 
 
-def parse_response_text(body: bytes) -> str:
+def extract_output_text(body: bytes) -> str:
     """The generated assistant text for one turn (osl as text): visible text,
     streamed tool-call args, reasoning, and a marker per tool call — tool calls
     ARE output tokens, so they're included."""
@@ -109,6 +115,9 @@ def parse_response_text(body: bytes) -> str:
             elif delta_type == "thinking_delta":
                 parts.append(delta.get("thinking") or "")
     return "".join(parts)
+
+
+parse_response_text = extract_output_text
 
 
 def _system_prompt_text(body: dict) -> str:

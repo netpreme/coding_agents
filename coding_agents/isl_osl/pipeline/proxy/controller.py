@@ -67,8 +67,9 @@ class Proxy:
             self.url,
             self.out_dir,
             self.instance_id,
-            raw=self.raw,
+            capture=self.raw,
         ).build()
+
         self._server = uvicorn.Server(
             uvicorn.Config(
                 app,

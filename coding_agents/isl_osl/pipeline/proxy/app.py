@@ -1,8 +1,8 @@
-"""The reverse-proxy ASGI app: forward claude-cli ↔ vLLM, tee per-turn rows.
+"""The reverse-proxy ASGI app: forward claude-cli ↔ inference server, tee per-turn rows.
 
-``ProxyApp(upstream, out_dir, instance_id, raw=True).build()`` returns a
+``ProxyApp(server_url, out_dir, instance_id, capture=True).build()`` returns a
 Starlette app that, for each `POST /v1/messages`, sanitizes the request and
-(with raw capture) tees the per-turn text trace to
+(with capture) tees the per-turn text trace to
 `<out_dir>/<instance_id>/turn_traces.jsonl`; other paths stream through
 unchanged (e.g. /v1/models).
 """
@@ -21,8 +21,8 @@ import httpx
 from loguru import logger
 from pipeline.proxy.parse import (
     common_prefix_len,
-    parse_response_text,
-    request_units,
+    extract_output_text,
+    request_chunks,
     rerole_system_messages,
 )
 from pipeline.utils.jsonl import JsonlWriter
@@ -53,34 +53,35 @@ class MessageRequest:
     """Sanitized request state for one /v1/messages call."""
 
     body: dict | None
-    forward_body: bytes
+    sanitized_bytes: bytes
 
 
 class ProxyApp:
-    """Reverse-proxy ASGI app for one problem (claude-cli ↔ vLLM)."""
+    """Reverse-proxy ASGI app for one problem (claude-cli ↔ inference server)."""
 
     def __init__(
         self,
-        upstream: str,
+        server_url: str,
         out_dir: Path,
         instance_id: str,
         *,
-        raw: bool = False,
+        capture: bool = False,
     ) -> None:
-        self.upstream = upstream.rstrip("/")
+        self.server_url = server_url.rstrip("/")
         self.instance_id = instance_id
-        # With raw capture: tee the raw text traces (isl_new + osl) to
-        # turn_traces.jsonl. `_prev_units` is the previous turn's request units, so each
+        # With capture: tee the raw text traces (isl_new + osl) to
+        # turn_traces.jsonl. `_last_turn_units` is the previous turn's request chunks, so each
         # turn's new suffix (isl_new as text) is a pure cross-turn string diff.
-        self._raw_writer = JsonlWriter(out_dir, "turn_traces.jsonl") if raw else None
-        self._prev_units: list[str] = []
+        self._trace_writer = JsonlWriter(out_dir, "turn_traces.jsonl") if capture else None
+        self._last_turn_units: list[str] = []
+        self._last_response_time: float | None = None
 
     def build(self) -> Starlette:
         return Starlette(
             routes=[
                 Route(
                     "/{path:path}",
-                    endpoint=self._handle,
+                    endpoint=self._route,
                     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"],
                 )
             ],
@@ -93,20 +94,20 @@ class ProxyApp:
             app.state.client = client
             yield
 
-    def _target(self, request: Request) -> str:
-        target = f"{self.upstream}{request.url.path}"
+    def _server_endpoint(self, request: Request) -> str:
+        target = f"{self.server_url}{request.url.path}"
         if request.url.query:
             target = f"{target}?{request.url.query}"
         return target
 
-    async def _handle(self, request: Request) -> Response:
+    async def _route(self, request: Request) -> Response:
         raw_body = await request.body()
         client = request.app.state.client
         if request.method == "POST" and request.url.path == "/v1/messages":
             return await self._messages(
                 client=client, request=request, raw_body=raw_body
             )
-        return await self._passthrough(
+        return await self._stream_to_server(
             client=client, request=request, raw_body=raw_body
         )
 
@@ -119,8 +120,8 @@ class ProxyApp:
 
         Buffering breaks "live" streaming to claude-cli, but at concurrency=1
         that's invisible — claude still parses the SSE chunks the same way."""
-        timestamp = time.time()
-        message_request = self._prepare_message_request(raw_body)
+        request_received_time = time.time()
+        message_request = self._sanitize_request(raw_body)
 
         # Claude Code fires a background "sentence-case title" request once per
         # session. It shares the leading system-prompt tokens with the real
@@ -130,26 +131,34 @@ class ProxyApp:
         if message_request.body is not None and _is_title_request(message_request.body):
             return _canned_title_response(message_request.body.get("model") or "")
 
-        upstream_response = await self._forward_buffered(
-            client=client,
-            request=request,
-            body=message_request.forward_body,
+        tool_exec_ms = (
+            round((request_received_time - self._last_response_time) * 1000, 2)
+            if self._last_response_time is not None
+            else None
         )
 
+        server_response = await self._send_to_server(
+            client=client,
+            request=request,
+            body=message_request.sanitized_bytes,
+        )
+        self._last_response_time = time.time()
+
         if (
-            self._raw_writer is not None
+            self._trace_writer is not None
             and message_request.body is not None
             and not _should_skip_telemetry(message_request.body)
         ):
-            self._write_raw(
-                timestamp=timestamp,
+            self._record_turn(
+                request_received_time=request_received_time,
+                tool_exec_ms=tool_exec_ms,
                 body=message_request.body,
-                osl_text=parse_response_text(upstream_response.content),
+                osl_text=extract_output_text(server_response.content),
             )
 
-        return _buffered_response(upstream_response)
+        return _make_response(server_response)
 
-    def _prepare_message_request(self, raw_body: bytes) -> MessageRequest:
+    def _sanitize_request(self, raw_body: bytes) -> MessageRequest:
         try:
             body = json.loads(raw_body)
             if not isinstance(body, dict):
@@ -159,13 +168,13 @@ class ProxyApp:
             rerole_system_messages(body)
             return MessageRequest(
                 body=body,
-                forward_body=json.dumps(body).encode(),
+                sanitized_bytes=json.dumps(body).encode(),
             )
         except (json.JSONDecodeError, ValueError) as exc:
             logger.warning("request parse error: {!r}", exc)
-            return MessageRequest(body=None, forward_body=raw_body)
+            return MessageRequest(body=None, sanitized_bytes=raw_body)
 
-    async def _forward_buffered(
+    async def _send_to_server(
         self,
         client: httpx.AsyncClient,
         request: Request,
@@ -173,43 +182,54 @@ class ProxyApp:
     ) -> httpx.Response:
         return await client.request(
             request.method,
-            self._target(request),
+            self._server_endpoint(request),
             content=body,
             headers=_strip_hop_by_hop(request.headers.items()),
         )
 
-    def _write_raw(self, timestamp: float, body: dict, osl_text: str) -> None:
+    def _record_turn(
+        self,
+        request_received_time: float,
+        tool_exec_ms: float | None,
+        body: dict,
+        osl_text: str,
+    ) -> None:
         """Tee the raw text for this turn:
         isl_text     — the full input (system + tools + messages),
         isl_new_text — the input appended since the previous turn (cached
                        prefix stripped off; == isl_text on the first turn),
-        osl_text     — the generated assistant text (incl. tool calls).
+        osl_text     — the generated assistant text (incl. tool calls),
+        tool_exec_ms — wall-clock time the agent spent executing tools between
+                       the previous turn's response and this turn's request;
+                       None on the first turn.
         """
-        units = request_units(body)
+        chunks = request_chunks(body)
         prefix_length = common_prefix_len(
-            previous_units=self._prev_units,
-            current_units=units,
+            previous_units=self._last_turn_units,
+            current_units=chunks,
         )
-        self._prev_units = units
+        self._last_turn_units = chunks
 
-        assert self._raw_writer is not None
-        self._raw_writer.write(
+        assert self._trace_writer is not None
+        self._trace_writer.write(
             instance_id=self.instance_id,
             row={
-                "ts": round(timestamp, 3),
-                "isl_text": "\n".join(units),
-                "isl_new_text": "\n".join(units[prefix_length:]),
+                "request_time": round(request_received_time, 3),
+                "ts": round(request_received_time, 3),
+                "tool_exec_ms": tool_exec_ms,
+                "isl_text": "\n".join(chunks),
+                "isl_new_text": "\n".join(chunks[prefix_length:]),
                 "osl_text": osl_text,
             },
         )
 
-    async def _passthrough(
+    async def _stream_to_server(
         self, client: httpx.AsyncClient, request: Request, raw_body: bytes
     ) -> Response:
         """Stream non-/v1/messages requests through unchanged (e.g. /v1/models)."""
         upstream_req = client.build_request(
             request.method,
-            self._target(request),
+            self._server_endpoint(request),
             content=raw_body,
             headers=_strip_hop_by_hop(request.headers.items()),
         )
@@ -267,16 +287,16 @@ def _is_title_request(body: dict) -> bool:
     return False
 
 
-def _buffered_response(
-    upstream_response: httpx.Response,
+def _make_response(
+    server_response: httpx.Response,
     content: bytes | None = None,
 ) -> Response:
     if content is None:
-        content = upstream_response.content
+        content = server_response.content
     return Response(
         content=content,
-        status_code=upstream_response.status_code,
-        headers=_strip_hop_by_hop(upstream_response.headers.items()),
+        status_code=server_response.status_code,
+        headers=_strip_hop_by_hop(server_response.headers.items()),
     )
 
 

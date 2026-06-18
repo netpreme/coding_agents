@@ -50,6 +50,11 @@ def get_server_metadata(url: str) -> dict:
     return {"id": data["id"], "max_model_len": data.get("max_model_len")}
 
 
+def get_model_name(url: str) -> str:
+    """Legacy wrapper for callers that only need the served model id."""
+    return get_server_metadata(url)["id"]
+
+
 # GPU / NVML helpers.
 
 

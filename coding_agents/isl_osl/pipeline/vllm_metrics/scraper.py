@@ -102,7 +102,7 @@ class Poller:
         """Thread entry point: drive the async loop until `stop_event` is set."""
         asyncio.run(self.run(stop_event))
 
-    async def scrape_prometheus_metrics(self, client: httpx.AsyncClient) -> Snapshot:
+    async def fetch_metrics_snapshot(self, client: httpx.AsyncClient) -> Snapshot:
         resp = await client.get(f"{self._url}/metrics", timeout=10.0)
         return Snapshot.from_metrics(parse_raw_response(resp.text))
 
@@ -114,15 +114,15 @@ class Poller:
         the baseline; the next successful one re-baselines.
         """
         async with httpx.AsyncClient() as client:
-            previous: Snapshot | None = None
-            while previous is None and not stop_event.is_set():
+            baseline: Snapshot | None = None
+            while baseline is None and not stop_event.is_set():
                 try:
-                    previous = await self.scrape_prometheus_metrics(client)
+                    baseline = await self.fetch_metrics_snapshot(client)
                 except httpx.HTTPError as exc:
                     logger.warning("baseline scrape error: {!r}", exc)
                     await asyncio.sleep(self._poll_interval_s)
-            if previous is not None:
-                logger.info("baseline scrape: request_count={}", previous.request_count)
+            if baseline is not None:
+                logger.info("baseline scrape: request_count={}", baseline.request_count)
 
             # Max kv_cache_usage gauge seen across this turn's in-flight polls.
             # vLLM frees a request's KV the instant it finishes, so the gauge is
@@ -131,33 +131,33 @@ class Poller:
             while not stop_event.is_set():
                 await asyncio.sleep(self._poll_interval_s)
                 try:
-                    current = await self.scrape_prometheus_metrics(client)
+                    latest = await self.fetch_metrics_snapshot(client)
                 except httpx.HTTPError as exc:
                     logger.warning("scrape error: {!r}", exc)
-                    previous = None
+                    baseline = None
                     peak_kv_usage = 0.0
                     continue
-                if previous is None:
-                    previous = current
+                if baseline is None:
+                    baseline = latest
                     continue
 
-                peak_kv_usage = max(peak_kv_usage, current.kv_usage_pct)
-                completed = current.request_count - previous.request_count
-                if completed >= 1:
+                peak_kv_usage = max(peak_kv_usage, latest.kv_usage_pct)
+                new_completions = latest.request_count - baseline.request_count
+                if new_completions >= 1:
                     row = compute_turn_metrics(
-                        before=previous, after=current, peak_kv_usage=peak_kv_usage
+                        before=baseline, after=latest, peak_kv_usage=peak_kv_usage
                     )
                     self._out.write(instance_id=self._instance_id, row=row)
-                    if completed > 1:
+                    if new_completions > 1:
                         logger.warning(
                             "{} requests completed in one tick — "
                             "attribution may be lossy",
-                            completed,
+                            new_completions,
                         )
                     # Advance the baseline ONLY on a completion, so each turn's
                     # delta window spans its whole lifecycle. Prefix-cache
                     # counters (prefix_cache_hits/queries, external hits) tick at
                     # PREFILL, not completion; advancing every poll would leave
                     # those jumps outside the window and record them as 0.
-                    previous = current
+                    baseline = latest
                     peak_kv_usage = 0.0  # start the next turn's peak fresh

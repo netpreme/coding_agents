@@ -143,7 +143,7 @@ def main() -> int:
     backend_url = ANTHROPIC_URL if remote else SERVER_URL
     capture = not remote and args.capture is not None
     sandbox_root = Path(f"/tmp/swe_sandboxes/{save_dir.name}")
-    started_at = time.time()
+    run_start_time = time.time()
 
     server_kwargs = dict(
         url=backend_url,
@@ -165,7 +165,7 @@ def main() -> int:
         dataset_name=dataset_name,
         solved_ids=solved_ids,
         proxy_port=PROXY_PORT,
-        started_at=started_at,
+        run_start_time=run_start_time,
     )
 
     for task in tqdm(dataset, desc="solving", unit="problem"):
@@ -203,8 +203,8 @@ def main() -> int:
             save_dir=save_dir,
             task=task,
             server=server,
-            started_at=sandbox.started,
-            ended_at=sandbox.ended,
+            start_time=sandbox.start_time,
+            end_time=sandbox.end_time,
             exit_code=exit_code,
         )
 
