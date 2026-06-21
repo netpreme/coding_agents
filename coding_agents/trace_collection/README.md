@@ -51,6 +51,7 @@ The OSL is the cumulative tokens generated in decode. ISL_new is the unique toke
 | `request_time` | wall-clock timestamp of the turn in `turn_traces.jsonl` (proxy) |
 | `ts` | wall-clock timestamp of the turn in `engine_metrics.jsonl` (vLLM scraper) |
 | `e2e_ms` | vLLM's end-to-end latency for the turn |
+| `tool_exec_ms` | wall-clock time between the previous turn's vLLM response and this turn's request arriving at the proxy — i.e. time Claude Code spent executing tools; `null` on turn 1 |
 | `prefix_kv_tokens` | `isl + osl` of the previous turn (max possible cache reuse this turn) |
 | `usable_prefix_kv_tokens` | `cache_hit_rate × prefix_kv_tokens` |
 | `kv_cache_used_bytes` | `isl_cached × Bytes/tok` |
