@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the coding-agents harness and deps on a virual env
+# Installs the coding-agents harness and dependencies into a virtual env.
 
 set -euo pipefail
 
@@ -54,7 +54,7 @@ source "$HERE/.venv/bin/activate"
 # `uv pip` targets the active venv. A bare `pip` wouldn't: `uv venv` ships no
 # pip, so `pip install .` would silently fall back to a system/user pip and
 # install into the wrong environment.
-log "installing the harness + deps (pip install .)"
+log "installing the harness + deps"
 uv pip install .
 
 log "done — .venv is ready. Activate it with:"

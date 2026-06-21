@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Boots the vLLM server with the Anthropic /v1/messages endpoint enabled
-# (provided by vllm_xmem). Knobs sourced from .env if present, else defaulted.
+# Boots the vLLM server with the Anthropic /v1/messages endpoint enabled.
+# Knobs are sourced from .env if present, else defaulted.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Variable precedence is: caller env > .env file > hardcoded defaults.
-# `run.sh` exports overridden values before invoking reset_vllm.sh → us,
-# so caller-set vars must win over what's in .env.
+# Python exports overridden values before invoking this script, so caller-set
+# vars must win over what's in .env.
 if [[ -f "$HERE/.env" ]]; then
     while IFS='=' read -r key val; do
         [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
@@ -27,6 +27,8 @@ fi
 # Model-specific args that have no sensible shared default. Only set what the
 # model genuinely requires; never override knobs the user can pick.
 REASONING_ARGS=()
+SEQ_ARGS=()
+[[ -n "${MAX_NUM_SEQS:-}" ]] && SEQ_ARGS=(--max-num-seqs "$MAX_NUM_SEQS")
 case "$MODEL_NAME" in
     openai/gpt-oss-*)
         REASONING_ARGS=( --reasoning-parser openai_gptoss )
@@ -52,5 +54,6 @@ exec "$VLLM_BIN" serve "$MODEL_NAME" \
     --enable-auto-tool-choice \
     --tool-call-parser "$TOOL_CALL_PARSER" \
     "${REASONING_ARGS[@]}" \
+    "${SEQ_ARGS[@]}" \
     --enable-prompt-tokens-details \
     "$@"
