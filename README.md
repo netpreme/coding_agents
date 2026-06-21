@@ -1,15 +1,15 @@
 # Coding Agents Experiments/Applications
 
-Coding agents take turns to carry out tasks. Using Claude code as the harness, the repo contains code to 
+Coding agents take turns to carry out tasks. Using Claude Code as the harness, the repo contains code to:
 * collect per-turn token distributions
 * collect per-turn inference metrics for open source/weight models
 * collect per-turn tool call distributions
 
-To collect above metrics, please check the README in the folder `/isl_osl` [here](coding_agents/isl_osl/README.md). 
+To collect these metrics, see the README in [coding_agents/trace_collection](coding_agents/trace_collection/README.md).
 
 ## Installation
 
-Install prerequisites and setup python virtual env.
+Install prerequisites and set up the Python virtual environment.
 
 ```bash
 ./install.sh
