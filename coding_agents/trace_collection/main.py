@@ -10,7 +10,9 @@ from pathlib import Path
 
 from loguru import logger
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
+from coding_agents.serving import close_gpu_handles, open_gpu_handles, read_gpu_stats
 from coding_agents.trace_collection.pipeline.harness import DEFAULT_TIMEOUT_S, run_task
 from coding_agents.trace_collection.pipeline.datasets import get_dataset
 from coding_agents.trace_collection.pipeline.inference_servers import (
@@ -31,6 +33,11 @@ WAIT_TIME = 0.3
 
 
 def main() -> int:
+    logger.remove()
+    logger.add(
+        lambda msg: tqdm.write(str(msg), end="", file=sys.stderr),
+        colorize=True,
+    )
     args = _parse_args()
     save_dir = _resolve_save_dir(args.resume)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -66,48 +73,110 @@ def main() -> int:
         run_start_ts=time.time(),
     )
 
-    for task in tqdm(tasks, desc="solving", unit="problem"):
-        logger.info(
-            "{0} ({1} @ {2})".format(
-                task["instance_id"], task["repo"], task["base_commit"][:5]
-            )
-        )
-        with (
-            inference_server.session(
-                save_dir=save_dir,
-                instance_id=task["instance_id"],
-                capture=args.capture,
-            ) as server,
-            Sandbox(save_dir=save_dir, prefix=f"{task['instance_id']}.") as sandbox,
-        ):
-            time.sleep(WAIT_TIME)
-            exit_code = run_task(
-                task=task,
-                sandbox_dir=sandbox.dir,
-                model=server.model,
-                base_url=server.base_url,
-                timeout_s=args.timeout,
-                oauth=server.oauth,
-                runs_dir=server.transcript_runs_dir,
-            )
-            server_runtime = server.runtime()
+    turn_count = 0
+    latest_row: dict = {}
+    gpu_handles = open_gpu_handles()
 
-        save_session_config(
-            save_dir=save_dir,
-            task=task,
-            runtime=server_runtime,
-            start_ts=sandbox.start_ts,
-            end_ts=sandbox.end_ts,
-            exit_code=exit_code,
+    progress_bar = tqdm(
+        tasks,
+        desc="solving",
+        unit="problem",
+        dynamic_ncols=True,
+        file=sys.stderr,
+        position=0,
+    )
+    metrics_bar = tqdm(
+        bar_format="{desc}",
+        desc="  (waiting for first turn…)",
+        dynamic_ncols=True,
+        file=sys.stderr,
+        position=1,
+    )
+
+    def _update_live_metrics(row: dict) -> None:
+        nonlocal turn_count
+        turn_count += 1
+        latest_row.update(row)
+        metrics_bar.set_description(
+            _format_turn_metrics(
+                turn_count=turn_count, row=latest_row, gpu_handles=gpu_handles
+            )
         )
+
+    try:
+        with logging_redirect_tqdm():
+            for task in progress_bar:
+                turn_count = 0
+                latest_row.clear()
+                metrics_bar.set_description("  (waiting for first turn…)")
+                logger.info(
+                    "{0} ({1} @ {2})".format(
+                        task["instance_id"], task["repo"], task["base_commit"][:5]
+                    )
+                )
+                with (
+                    inference_server.session(
+                        save_dir=save_dir,
+                        instance_id=task["instance_id"],
+                        capture=args.capture,
+                        fn=_update_live_metrics,
+                    ) as server,
+                    Sandbox(
+                        save_dir=save_dir, prefix=f"{task['instance_id']}."
+                    ) as sandbox,
+                ):
+                    time.sleep(WAIT_TIME)
+                    exit_code = run_task(
+                        task=task,
+                        sandbox_dir=sandbox.dir,
+                        model=server.model,
+                        base_url=server.base_url,
+                        timeout_s=args.timeout,
+                        oauth=server.oauth,
+                        runs_dir=server.transcript_runs_dir,
+                    )
+                    server_runtime = server.runtime()
+
+                save_session_config(
+                    save_dir=save_dir,
+                    task=task,
+                    runtime=server_runtime,
+                    start_ts=sandbox.start_ts,
+                    end_ts=sandbox.end_ts,
+                    exit_code=exit_code,
+                )
+    finally:
+        progress_bar.close()
+        metrics_bar.close()
+        if gpu_handles:
+            close_gpu_handles()
 
     return 0
 
 
-def _resolve_save_dir(resume: Path | None) -> Path:
-    if resume is not None:
-        return resume.expanduser().resolve()
-    return ROOT_DIR / "results" / datetime.now().strftime("%Y%m%d_%H%M%S")
+def _format_turn_metrics(turn_count: int, row: dict, gpu_handles: list) -> str:
+    """Format a one-line metrics description from the latest MetricsScraper row."""
+    parts = [f"turn={turn_count}"]
+    isl = row.get("isl")
+    isl_new = row.get("isl_new")
+    if isl is not None:
+        parts.append(f"isl={isl:.0f}")
+    if row.get("osl") is not None:
+        parts.append(f"osl={row['osl']:.0f}")
+    if isl_new is not None:
+        parts.append(f"isl_new={isl_new:.0f}")
+    if isl and isl_new is not None and isl > 0:
+        parts.append(f"prefix_hit={(isl - isl_new) / isl * 100:.1f}%")
+    if row.get("prefill_ms") is not None:
+        parts.append(f"prefill={row['prefill_ms']:.0f}ms")
+    if row.get("decode_ms") is not None:
+        parts.append(f"decode={row['decode_ms']:.0f}ms")
+    gpu_util, gpu_mem = read_gpu_stats(gpu_handles)
+    if gpu_util:
+        parts.append(gpu_util)
+    if gpu_mem:
+        parts.append(gpu_mem)
+    return "  " + "  ".join(parts)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -155,6 +224,12 @@ def _parse_args() -> argparse.Namespace:
         help=f"wall-clock cap (seconds) per claude session (default: {DEFAULT_TIMEOUT_S})",
     )
     return parser.parse_args()
+
+
+def _resolve_save_dir(resume: Path | None) -> Path:
+    if resume is not None:
+        return resume.expanduser().resolve()
+    return ROOT_DIR / "results" / datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 if __name__ == "__main__":

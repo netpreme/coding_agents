@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Callable
 from pathlib import Path
 
-from coding_agents.trace_collection.pipeline.inference_servers.vllm.metric_scraper import (
-    MetricsScraper,
-)
-from coding_agents.trace_collection.pipeline.inference_servers.vllm.server import (
-    VllmConfig,
-    VllmServer,
-)
+from coding_agents.serving import MetricsScraper, VllmConfig, VllmServer
 from coding_agents.trace_collection.pipeline.proxy import Proxy
 
 
@@ -56,6 +51,7 @@ class VllmBackend:
         save_dir: Path,
         instance_id: str,
         capture: bool = False,
+        fn: Callable[[dict], None] | None = None,
     ) -> "VllmSession":
         return VllmSession(
             config=self._config,
@@ -63,6 +59,7 @@ class VllmBackend:
             save_dir=save_dir,
             instance_id=instance_id,
             capture=capture,
+            fn=fn,
         )
 
 
@@ -74,12 +71,14 @@ class VllmSession:
         save_dir: Path,
         instance_id: str,
         capture: bool,
+        fn: Callable[[dict], None] | None = None,
     ) -> None:
         self._config = config
         self._proxy_port = proxy_port
         self._save_dir = save_dir
         self._instance_id = instance_id
         self._capture = capture
+        self._fn = fn
         self._stack: contextlib.ExitStack | None = None
         self._server: VllmServer | None = None
         self.model: str = ""
@@ -96,6 +95,7 @@ class VllmSession:
                 save_dir=self._save_dir,
                 instance_id=self._instance_id,
                 enabled=True,
+                fn=self._fn,
             )
         )
         proxy = self._stack.enter_context(

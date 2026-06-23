@@ -6,6 +6,7 @@ import asyncio
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +51,7 @@ class MetricsScraper:
         instance_id: str,
         poll_interval_s: float = 0.1,
         enabled: bool = True,
+        fn: Callable[[dict], None] | None = None,
     ) -> None:
         self.enabled = enabled
         self.instance_id = instance_id
@@ -60,6 +62,7 @@ class MetricsScraper:
             instance_id=instance_id,
             out_dir=self.out_dir,
             poll_interval_s=poll_interval_s,
+            fn=fn,
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -98,19 +101,26 @@ class Poller:
     """Poll vLLM /metrics and write one JSONL row per detected request."""
 
     def __init__(
-        self, url: str, instance_id: str, out_dir: Path, poll_interval_s: float = 0.1
+        self,
+        url: str,
+        instance_id: str,
+        out_dir: Path,
+        poll_interval_s: float = 0.1,
+        fn: Callable[[dict], None] | None = None,
     ) -> None:
         self._url = url.rstrip("/")
         self._instance_id = instance_id
         self._out = JsonlWriter(out_dir, "engine_metrics.jsonl")
         self._poll_interval_s = poll_interval_s
+        self._fn = fn
 
     def run_blocking(self, stop_event: threading.Event) -> None:
         asyncio.run(self.run(stop_event))
 
     async def fetch_metrics_snapshot(self, client: httpx.AsyncClient) -> "Snapshot":
+        ts = time.time()  # stamp before the round-trip
         resp = await client.get(f"{self._url}/metrics", timeout=10.0)
-        return Snapshot.from_metrics(parse_raw_response(resp.text))
+        return Snapshot.from_metrics(parse_raw_response(resp.text), ts=ts)
 
     async def run(self, stop_event: threading.Event) -> None:
         async with httpx.AsyncClient() as client:
@@ -142,14 +152,14 @@ class Poller:
                 new_completions = latest.request_count - baseline.request_count
                 if new_completions >= 1:
                     row = compute_turn_metrics(
-                        before=baseline, after=latest, peak_kv_usage=peak_kv_usage
+                        before=baseline,
+                        after=latest,
+                        peak_kv_usage=peak_kv_usage,
+                        n=new_completions,
                     )
                     self._out.write(instance_id=self._instance_id, row=row)
-                    if new_completions > 1:
-                        logger.warning(
-                            "{} requests completed in one tick — attribution may be lossy",
-                            new_completions,
-                        )
+                    if self._fn is not None:
+                        self._fn(row)
                     baseline = latest
                     peak_kv_usage = 0.0
 
@@ -168,7 +178,15 @@ class Snapshot:
     ts: float
 
     @classmethod
-    def from_metrics(cls, metrics: dict[str, float]) -> "Snapshot":
+    def from_metrics(
+        cls, metrics: dict[str, float], ts: float | None = None
+    ) -> "Snapshot":
+        """Parse a raw Prometheus metrics dict into a Snapshot.
+
+        ``ts`` should be captured *before* the HTTP fetch so the timestamp
+        reflects when the scrape was initiated, not when parsing completed.
+        Defaults to ``time.time()`` when not provided.
+        """
         timings = {
             "prefill": extract_metric(metrics=metrics, name_prefix=PREFILL_SUM),
             "decode": extract_metric(metrics=metrics, name_prefix=DECODE_SUM),
@@ -206,23 +224,30 @@ class Snapshot:
             external_prefix_cache_hits=int(
                 extract_metric(metrics=metrics, name_prefix=EXTERNAL_PREFIX_CACHE_HITS)
             ),
-            ts=time.time(),
+            ts=ts if ts is not None else time.time(),
         )
 
 
 def compute_turn_metrics(
-    before: Snapshot, after: Snapshot, peak_kv_usage: float = 0.0
+    before: Snapshot,
+    after: Snapshot,
+    peak_kv_usage: float = 0.0,
+    n: int = 1,
 ) -> dict:
-    """Build one row of raw measurements from two consecutive snapshots."""
+    """Build one row of per-request average measurements from two consecutive snapshots.
+
+    When n > 1 requests completed in the same tick, latency and token fields are
+    divided by n so each row represents per-request averages rather than sums.
+    """
 
     def delta_ms(name: str) -> float:
         return (
             after.timing_seconds_sum[name] - before.timing_seconds_sum[name]
         ) * 1000.0
 
-    isl = after.prompt_tokens - before.prompt_tokens
-    osl = after.gen_tokens - before.gen_tokens
-    isl_new = after.prefill_kv_computed - before.prefill_kv_computed
+    isl = (after.prompt_tokens - before.prompt_tokens) / n
+    osl = (after.gen_tokens - before.gen_tokens) / n
+    isl_new = (after.prefill_kv_computed - before.prefill_kv_computed) / n
 
     stop_reason = ""
     for reason in FINISHED_REASONS:
@@ -235,14 +260,15 @@ def compute_turn_metrics(
 
     return {
         "ts": round(before.ts, 3),
-        "isl": isl,
-        "osl": osl,
-        "isl_new": isl_new,
-        "prefill_ms": round(delta_ms("prefill"), 2),
-        "decode_ms": round(delta_ms("decode"), 2),
-        "queue_ms": round(delta_ms("queue"), 2),
-        "itl_ms": round(delta_ms("tpot"), 3) if osl > 0 else None,
-        "e2e_ms": round(delta_ms("e2e"), 2),
+        "n": n,
+        "isl": round(isl, 1),
+        "osl": round(osl, 1),
+        "isl_new": round(isl_new, 1),
+        "prefill_ms": round(delta_ms("prefill") / n, 2),
+        "decode_ms": round(delta_ms("decode") / n, 2),
+        "queue_ms": round(delta_ms("queue") / n, 2),
+        "itl_ms": round(delta_ms("tpot") / n, 3) if osl > 0 else None,
+        "e2e_ms": round(delta_ms("e2e") / n, 2),
         "stop_reason": stop_reason,
         "kv_cache_usage_pct_peak": round(peak_kv_usage * 100, 3),
         "prefix_cache_hits": after.prefix_cache_hits - before.prefix_cache_hits,

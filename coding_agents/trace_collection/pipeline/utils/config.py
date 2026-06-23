@@ -40,7 +40,7 @@ def save_config(
     skipped_solved_count: int,
     run_start_ts: float,
 ) -> None:
-    from coding_agents.trace_collection.pipeline.inference_servers.vllm.utils import (
+    from coding_agents.serving.utils import (
         get_package_version,
         gpu_info,
         read_env_file,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import time
 from collections.abc import Iterable
 
 import psutil
@@ -69,7 +71,14 @@ def terminate_processes(
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-    _, alive = psutil.wait_procs(targets, timeout=grace_seconds)
+    try:
+        _, alive = psutil.wait_procs(targets, timeout=grace_seconds)
+    except OSError as exc:
+        if exc.errno != errno.EINVAL:
+            raise
+        # pidfd_open(2) rejects PID 0 or thread IDs; fall back to polling
+        time.sleep(grace_seconds)
+        alive = [p for p in targets if p.is_running()]
     for process in alive:
         try:
             process.kill()

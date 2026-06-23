@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pynvml
 
-# coding_agents/ — inference_servers/vllm/ is four levels up from this file.
-SERVER_SH = Path(__file__).resolve().parents[4] / "server.sh"
+# coding_agents/ — serving/ is one level up from this file.
+SERVER_SH = Path(__file__).resolve().parents[1] / "server.sh"
 ENV_PATH = SERVER_SH.parent / ".env"
 LOG = Path("/tmp/vllm_server.log")
 
@@ -41,6 +41,41 @@ def nvml_context():
             pynvml.nvmlShutdown()
         except pynvml.NVMLError:
             pass
+
+
+def open_gpu_handles() -> list:
+    """Return pynvml handles for all GPUs, or [] if pynvml is unavailable."""
+    try:
+        pynvml.nvmlInit()
+        return [
+            pynvml.nvmlDeviceGetHandleByIndex(i)
+            for i in range(pynvml.nvmlDeviceGetCount())
+        ]
+    except pynvml.NVMLError:
+        return []
+
+
+def read_gpu_stats(handles: list) -> tuple[str, str]:
+    """Return (util_str, mem_str) from open pynvml handles, or ('', '') on error."""
+    if not handles:
+        return "", ""
+    try:
+        utils = [pynvml.nvmlDeviceGetUtilizationRates(handle).gpu for handle in handles]
+        mems = [pynvml.nvmlDeviceGetMemoryInfo(handle) for handle in handles]
+        used_gb = sum(m.used for m in mems) / 1024**3
+        total_gb = sum(m.total for m in mems) / 1024**3
+        avg_util = sum(utils) / len(utils)
+        return f"gpu_util={avg_util:.0f}%", f"gpu_mem={used_gb:.1f}/{total_gb:.1f}GB"
+    except pynvml.NVMLError:
+        return "", ""
+
+
+def close_gpu_handles() -> None:
+    """Shut down the pynvml session, ignoring errors."""
+    try:
+        pynvml.nvmlShutdown()
+    except pynvml.NVMLError:
+        pass
 
 
 def gpu_used_mib() -> int:

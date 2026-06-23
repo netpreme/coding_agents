@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import psutil
 from loguru import logger
 
-from coding_agents.trace_collection.pipeline.inference_servers.vllm.utils import (
+from coding_agents.serving.utils import (
     LOG,
     SERVER_SH,
     check_server_initialized,
