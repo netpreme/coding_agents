@@ -28,7 +28,7 @@ dev = [
 [project.scripts]
 coding-agents-trace-collection = "coding_agents.trace_collection.main:main"
 coding-agents-isl-osl = "coding_agents.trace_collection.main:main"
-coding-agents-replay = "coding_agents.replay.main:main"
+coding-agents-trace-replay = "coding_agents.trace_replay.main:main"
 
 [tool.setuptools]
 include-package-data = false
